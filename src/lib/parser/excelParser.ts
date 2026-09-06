@@ -46,8 +46,12 @@ function parseDateStr(val: any): string {
   return str;
 }
 
-export function parseReportFile(buffer: Buffer, fileName: string, forcedType?: ReportType): ParseResult {
-  const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true });
+export function parseReportFile(buffer: Buffer | ArrayBuffer | Uint8Array, fileName: string, forcedType?: ReportType): ParseResult {
+  const isArray = buffer instanceof ArrayBuffer || buffer instanceof Uint8Array || (typeof Buffer !== 'undefined' && !Buffer.isBuffer(buffer));
+  const workbook = XLSX.read(buffer as any, { 
+    type: isArray ? 'array' : 'buffer', 
+    cellDates: true 
+  });
   const sheetNames = workbook.SheetNames;
   const warnings: string[] = [];
 
