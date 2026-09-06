@@ -395,6 +395,30 @@ class PortalDatabase {
       sitesCount: data.sitesCount
     }));
 
+    const mbuTotals: Record<string, { tdtHours: number; tdtMinutes: number; tnar: number; totalSites: number }> = {};
+    for (const [mbu, data] of Object.entries(mbuMap)) {
+      mbuTotals[mbu] = {
+        tdtHours: Number(data.tdtHours.toFixed(1)),
+        tdtMinutes: Number((data.tdtHours * 60).toFixed(0)),
+        tnar: data.sitesCount > 0 ? Number((data.sumNar / data.sitesCount).toFixed(2)) : 100,
+        totalSites: data.sitesCount
+      };
+    }
+
+    const cluster4Nar = mbuWise.length > 0
+      ? Number((mbuWise.reduce((acc, m) => acc + m.tnar, 0) / mbuWise.length).toFixed(2))
+      : 98.43;
+
+    const totalDowntimeHours = Number(
+      compiledSites.reduce((acc, s) => acc + s.dtHours, 0).toFixed(1)
+    );
+
+    const platinumCount = Object.values(sites).filter(s => s.tier?.toUpperCase() === 'PLATINUM' || s.tier?.toUpperCase() === 'VIP').length;
+
+    const mbuList = Object.keys(mbuTotals).length > 0
+      ? Object.keys(mbuTotals)
+      : ['C4-1 Sukkur', 'C4-2 Larkana', 'C4-3 Jacobabad', 'C4-4 Nawabshah', 'C4-5 Mirpurkhas', 'C4-6 Hyderabad', 'C4-7 Kotri', 'C4-8 Badin'];
+
     // Fuel Stats
     let totalDelivered = 0;
     let totalConsumed = 0;
@@ -415,16 +439,6 @@ class PortalDatabase {
       fuelMbuMap[m].dgHours += f.dgRuntimeHours || 0;
     }
 
-    const cluster4Nar = mbuWise.length > 0
-      ? Number((mbuWise.reduce((acc, m) => acc + m.tnar, 0) / mbuWise.length).toFixed(2))
-      : 98.43;
-
-    const totalDowntimeHours = Number(
-      compiledSites.reduce((acc, s) => acc + s.dtHours, 0).toFixed(1)
-    );
-
-    const platinumCount = Object.values(sites).filter(s => s.tier?.toUpperCase() === 'PLATINUM' || s.tier?.toUpperCase() === 'VIP').length;
-
     return {
       version: '2026.09-v1',
       generatedAt: new Date().toISOString(),
@@ -438,9 +452,16 @@ class PortalDatabase {
         lastNarDate: narDaily.length > 0 ? narDaily[narDaily.length - 1].date : '2026-08-30',
         lastFuelDate: fuelLogs.length > 0 ? fuelLogs[fuelLogs.length - 1].date : '2026-08-30'
       },
+      mbuList,
       sites,
       nar: {
         mbuWise,
+        mbuTotals,
+        c4Total: {
+          avgNar: cluster4Nar,
+          totalDtHours: totalDowntimeHours,
+          totalSites: compiledSites.length
+        },
         sites: compiledSites
       },
       fuel: {

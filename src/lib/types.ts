@@ -88,9 +88,12 @@ export interface SyncPayload {
     lastNarDate: string;
     lastFuelDate: string;
   };
+  mbuList?: string[];
   sites: Record<string, SiteMasterRecord>;
   nar: {
     mbuWise: Array<{ mbu: string; tdtHours: number; tnar: number; sitesCount: number }>;
+    mbuTotals?: Record<string, { tdtMinutes: number; tdtHours: number; tnar: number; totalSites?: number }>;
+    c4Total?: { avgNar: number; totalDtHours: number; totalSites: number };
     sites: Array<{
       code: string;
       name: string;

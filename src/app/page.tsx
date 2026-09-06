@@ -14,7 +14,9 @@ import {
   Check, 
   Clock, 
   Zap, 
-  ArrowRight 
+  ArrowRight,
+  TrendingUp,
+  Calendar
 } from 'lucide-react';
 import type { ReportType } from '@/lib/types';
 import { parseReportFile, type ParseResult } from '@/lib/parser/excelParser';
@@ -170,7 +172,17 @@ export default function SinglePortalPage() {
 
           accAdded += data.rowsAdded || 0;
           accUpdated += data.rowsUpdated || 0;
-          if (isLastBatch) finalResult = data;
+          if (isLastBatch) {
+            finalResult = {
+              ...data,
+              summary: {
+                ...data.summary,
+                rowsAdded: accAdded,
+                rowsUpdated: accUpdated,
+                totalRows: records.length
+              }
+            };
+          }
         }
 
       } else if (type === 'NAR_PERFORMANCE') {
@@ -222,7 +234,17 @@ export default function SinglePortalPage() {
 
           accAdded += data.rowsAdded || 0;
           accUpdated += data.rowsUpdated || 0;
-          if (isLastBatch) finalResult = data;
+          if (isLastBatch) {
+            finalResult = {
+              ...data,
+              summary: {
+                ...data.summary,
+                rowsAdded: accAdded,
+                rowsUpdated: accUpdated,
+                totalRows: daily.length + tickets.length
+              }
+            };
+          }
         }
 
       } else if (type === 'FUEL_ACTIVITY') {
@@ -268,7 +290,17 @@ export default function SinglePortalPage() {
 
           accAdded += data.rowsAdded || 0;
           accUpdated += data.rowsUpdated || 0;
-          if (isLastBatch) finalResult = data;
+          if (isLastBatch) {
+            finalResult = {
+              ...data,
+              summary: {
+                ...data.summary,
+                rowsAdded: accAdded,
+                rowsUpdated: accUpdated,
+                totalRows: logs.length
+              }
+            };
+          }
         }
       }
 
@@ -318,11 +350,11 @@ export default function SinglePortalPage() {
             <strong className="text-rose-400">{stats?.summary?.totalDowntimeHours || '54,429'} hrs</strong>
           </div>
           <div className="bg-slate-950/80 px-3 py-1.5 rounded-xl border border-slate-800">
-            <span className="text-slate-400">Last NAR Date: </span>
+            <span className="text-slate-400">Latest NAR Date: </span>
             <strong className="text-teal-300">{stats?.summary?.lastNarDate || '2026-08-30'}</strong>
           </div>
           <div className="bg-slate-950/80 px-3 py-1.5 rounded-xl border border-slate-800">
-            <span className="text-slate-400">Last Fuel Date: </span>
+            <span className="text-slate-400">Latest Fuel Date: </span>
             <strong className="text-amber-300">{stats?.summary?.lastFuelDate || '2026-08-30'}</strong>
           </div>
         </div>
@@ -392,7 +424,7 @@ export default function SinglePortalPage() {
                   <span>Ready to Commit: {area1.preview.siteMasterRecords?.length || 0} Sites</span>
                 </div>
                 <div className="text-slate-400 text-[10px]">
-                  File Size: {(area1.file!.size / 1024).toFixed(1)} KB
+                  Sheets: {area1.preview.detectedSheets.join(', ')} | Size: {(area1.file!.size / 1024).toFixed(1)} KB
                 </div>
               </div>
             )}
@@ -407,17 +439,23 @@ export default function SinglePortalPage() {
 
             {/* Success Confirmation Banner */}
             {area1.result && (
-              <div className="p-3.5 rounded-xl bg-emerald-950/60 border border-emerald-600/60 text-emerald-300 text-xs space-y-1.5 shadow-lg">
+              <div className="p-3.5 rounded-xl bg-emerald-950/60 border border-emerald-600/60 text-emerald-300 text-xs space-y-2 shadow-lg">
                 <div className="flex items-center space-x-2 font-bold text-white">
                   <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                  <span>Site Master Refreshed!</span>
+                  <span>Site Master Refreshed & Synced!</span>
                 </div>
-                <div className="text-[11px] text-slate-300">
-                  +{area1.result.summary?.rowsAdded || 0} new sites, {area1.result.summary?.rowsUpdated || 0} updated
+                <div className="p-2 rounded bg-slate-950/80 border border-emerald-900/60 space-y-1 text-[11px]">
+                  <div className="text-emerald-300 font-medium">
+                    Total Processed: <strong>{(area1.result.summary?.rowsAdded || 0) + (area1.result.summary?.rowsUpdated || 0)} sites</strong>
+                  </div>
+                  <div className="text-slate-300 text-[10px] flex justify-between">
+                    <span>✨ Newly Added: <strong>+{area1.result.summary?.rowsAdded || 0}</strong></span>
+                    <span>🔄 Updated / Replaced: <strong>{area1.result.summary?.rowsUpdated || 0}</strong></span>
+                  </div>
                 </div>
-                <div className="text-[10px] text-teal-300 flex items-center gap-1 pt-1 border-t border-emerald-900/60">
-                  <Clock className="w-3 h-3" />
-                  <span>Live on app in 1–5 seconds upon open!</span>
+                <div className="text-[10px] text-teal-300 flex items-center gap-1 pt-1 border-t border-emerald-900/60 font-medium">
+                  <Clock className="w-3 h-3 text-teal-400" />
+                  <span>Live on mobile app fleet within 1–3 seconds!</span>
                 </div>
               </div>
             )}
@@ -500,12 +538,13 @@ export default function SinglePortalPage() {
                   </span>
                 </div>
                 {area2.preview.detectedDateRange && (
-                  <div className="text-slate-300 text-[10px]">
-                    Detected Dates: <span className="text-cyan-300 font-mono">{area2.preview.detectedDateRange}</span>
+                  <div className="text-slate-300 text-[10px] flex items-center gap-1">
+                    <Calendar className="w-3 h-3 text-cyan-400" />
+                    <span>Date Range: <strong className="text-cyan-300 font-mono">{area2.preview.detectedDateRange}</strong></span>
                   </div>
                 )}
                 <div className="text-slate-400 text-[10px]">
-                  Outage Incidents: {area2.preview.narOutageTickets?.length || 0} | File: {(area2.file!.size / 1024).toFixed(1)} KB
+                  Outage Tickets: {area2.preview.narOutageTickets?.length || 0} | File: {(area2.file!.size / 1024).toFixed(1)} KB
                 </div>
               </div>
             )}
@@ -520,17 +559,26 @@ export default function SinglePortalPage() {
 
             {/* Success Confirmation Banner */}
             {area2.result && (
-              <div className="p-3.5 rounded-xl bg-emerald-950/60 border border-emerald-600/60 text-emerald-300 text-xs space-y-1.5 shadow-lg">
+              <div className="p-3.5 rounded-xl bg-emerald-950/60 border border-emerald-600/60 text-emerald-300 text-xs space-y-2 shadow-lg">
                 <div className="flex items-center space-x-2 font-bold text-white">
                   <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                  <span>NAR Records Appended!</span>
+                  <span>NAR Records Appended & Synced!</span>
                 </div>
-                <div className="text-[11px] text-slate-300">
-                  +{area2.result.summary?.rowsAdded || 0} entries added/updated for ({area2.result.detectedDateRange || 'Detected Period'})
+                <div className="p-2 rounded bg-slate-950/80 border border-emerald-900/60 space-y-1 text-[11px]">
+                  <div className="text-cyan-300 font-medium">
+                    Total Processed: <strong>{(area2.result.summary?.rowsAdded || 0) + (area2.result.summary?.rowsUpdated || 0)} entries</strong>
+                  </div>
+                  <div className="text-slate-300 text-[10px] flex justify-between">
+                    <span>✨ New Entries: <strong>+{area2.result.summary?.rowsAdded || 0}</strong></span>
+                    <span>🔄 Existing Refreshed: <strong>{area2.result.summary?.rowsUpdated || 0}</strong></span>
+                  </div>
+                  <div className="text-slate-400 text-[10px] pt-1 border-t border-slate-800">
+                    Period: <strong className="text-white font-mono">{area2.result.detectedDateRange || 'Detected Period'}</strong>
+                  </div>
                 </div>
-                <div className="text-[10px] text-cyan-300 flex items-center gap-1 pt-1 border-t border-emerald-900/60">
-                  <Clock className="w-3 h-3" />
-                  <span>Live on app in 1–5 seconds upon open!</span>
+                <div className="text-[10px] text-cyan-300 flex items-center gap-1 pt-1 border-t border-emerald-900/60 font-medium">
+                  <Clock className="w-3 h-3 text-cyan-400" />
+                  <span>Live on mobile app fleet within 1–3 seconds!</span>
                 </div>
               </div>
             )}
@@ -610,8 +658,14 @@ export default function SinglePortalPage() {
                   <Check className="w-3.5 h-3.5" />
                   <span>Ready to Append: {area3.preview.fuelLogs?.length || 0} Fuel Entries</span>
                 </div>
+                {area3.preview.detectedDateRange && (
+                  <div className="text-slate-300 text-[10px] flex items-center gap-1">
+                    <Calendar className="w-3 h-3 text-amber-400" />
+                    <span>Date Range: <strong className="text-amber-300 font-mono">{area3.preview.detectedDateRange}</strong></span>
+                  </div>
+                )}
                 <div className="text-slate-400 text-[10px]">
-                  File Size: {(area3.file!.size / 1024).toFixed(1)} KB
+                  Sheets: {area3.preview.detectedSheets.join(', ')} | Size: {(area3.file!.size / 1024).toFixed(1)} KB
                 </div>
               </div>
             )}
@@ -626,17 +680,26 @@ export default function SinglePortalPage() {
 
             {/* Success Confirmation Banner */}
             {area3.result && (
-              <div className="p-3.5 rounded-xl bg-emerald-950/60 border border-emerald-600/60 text-emerald-300 text-xs space-y-1.5 shadow-lg">
+              <div className="p-3.5 rounded-xl bg-emerald-950/60 border border-emerald-600/60 text-emerald-300 text-xs space-y-2 shadow-lg">
                 <div className="flex items-center space-x-2 font-bold text-white">
                   <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                  <span>Fuel Logs Appended!</span>
+                  <span>Fuel Logs Appended & Synced!</span>
                 </div>
-                <div className="text-[11px] text-slate-300">
-                  +{area3.result.summary?.rowsAdded || 0} fuel log entries added/updated
+                <div className="p-2 rounded bg-slate-950/80 border border-emerald-900/60 space-y-1 text-[11px]">
+                  <div className="text-amber-300 font-medium">
+                    Total Processed: <strong>{(area3.result.summary?.rowsAdded || 0) + (area3.result.summary?.rowsUpdated || 0)} entries</strong>
+                  </div>
+                  <div className="text-slate-300 text-[10px] flex justify-between">
+                    <span>✨ New Entries: <strong>+{area3.result.summary?.rowsAdded || 0}</strong></span>
+                    <span>🔄 Existing Refreshed: <strong>{area3.result.summary?.rowsUpdated || 0}</strong></span>
+                  </div>
+                  <div className="text-slate-400 text-[10px] pt-1 border-t border-slate-800">
+                    Period: <strong className="text-white font-mono">{area3.result.detectedDateRange || 'All Dates'}</strong>
+                  </div>
                 </div>
-                <div className="text-[10px] text-amber-300 flex items-center gap-1 pt-1 border-t border-emerald-900/60">
-                  <Clock className="w-3 h-3" />
-                  <span>Live on app in 1–5 seconds upon open!</span>
+                <div className="text-[10px] text-amber-300 flex items-center gap-1 pt-1 border-t border-emerald-900/60 font-medium">
+                  <Clock className="w-3 h-3 text-amber-400" />
+                  <span>Live on mobile app fleet within 1–3 seconds!</span>
                 </div>
               </div>
             )}
