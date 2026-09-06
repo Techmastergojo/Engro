@@ -22,13 +22,18 @@ export async function POST(req: NextRequest) {
     let warnings: string[] = [];
 
     if (contentType.includes('application/json')) {
-      // 1. DIRECT JSON INGESTION (Fast & Reliable from Client Parser)
+      // 1. DIRECT JSON INGESTION (Fast & Reliable from Client Parser, with batching support)
       const body = await req.json();
       reportType = body.reportType || 'NAR_PERFORMANCE';
       fileName = body.fileName || 'Report.xlsx';
       fileSizeBytes = body.fileSizeBytes || 0;
       detectedSheets = body.detectedSheets || [];
       detectedDateRange = body.detectedDateRange;
+
+      const isBatch = body.isBatch === true;
+      const isLastBatch = body.isLastBatch !== false; // defaults to true if not specified
+      const batchIndex = body.batchIndex ?? 0;
+      const totalBatches = body.totalBatches ?? 1;
 
       if (reportType === 'SITE_MASTER' && body.siteMasterRecords) {
         const res = db.upsertSiteMasterRecords(body.siteMasterRecords);
@@ -62,8 +67,30 @@ export async function POST(req: NextRequest) {
         totalRows = body.fuelLogs.length;
         validRows = body.fuelLogs.length;
       }
+
+      // If this is an intermediate batch in a multi-batch upload, return fast acknowledgment
+      if (isBatch && !isLastBatch) {
+        return NextResponse.json({
+          success: true,
+          inProgress: true,
+          batchIndex,
+          totalBatches,
+          rowsAdded,
+          rowsUpdated,
+          totalRows
+        });
+      }
+
+      // If client provided cumulative totals for the whole batch sequence
+      if (body.cumulativeStats) {
+        rowsAdded += (body.cumulativeStats.rowsAdded || 0);
+        rowsUpdated += (body.cumulativeStats.rowsUpdated || 0);
+        totalRows = body.cumulativeStats.totalRows || totalRows;
+        validRows = body.cumulativeStats.validRows || validRows;
+      }
+
     } else {
-      // 2. MULTIPART FORM-DATA (Raw File Upload)
+      // 2. MULTIPART FORM-DATA (Raw File Upload fallback for smaller files)
       const formData = await req.formData();
       const file = formData.get('file') as File | null;
       const forcedType = formData.get('reportType') as ReportType | null;
@@ -105,8 +132,8 @@ export async function POST(req: NextRequest) {
         }
       } else if (parseResult.reportType === 'FUEL_ACTIVITY' && parseResult.fuelLogs) {
         const res = db.appendFuelLogs(parseResult.fuelLogs);
-        rowsAdded = res.added;
-        rowsUpdated = res.updated;
+        rowsAdded += res.added;
+        rowsUpdated += res.updated;
       }
     }
 

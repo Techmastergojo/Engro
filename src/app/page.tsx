@@ -23,6 +23,7 @@ interface AreaState {
   file: File | null;
   isParsing: boolean;
   isUploading: boolean;
+  uploadStatusText?: string;
   preview: ParseResult | null;
   result: any | null;
   error: string | null;
@@ -32,10 +33,13 @@ const initialAreaState: AreaState = {
   file: null,
   isParsing: false,
   isUploading: false,
+  uploadStatusText: '',
   preview: null,
   result: null,
   error: null,
 };
+
+const BATCH_SIZE = 500;
 
 export default function SinglePortalPage() {
   const [stats, setStats] = useState<any>(null);
@@ -78,6 +82,7 @@ export default function SinglePortalPage() {
       file,
       isParsing: true,
       isUploading: false,
+      uploadStatusText: '',
       preview: null,
       result: null,
       error: null,
@@ -101,7 +106,7 @@ export default function SinglePortalPage() {
     }
   };
 
-  // Upload parsed structured data to SQL API
+  // Upload parsed structured data in safe micro-batches (eliminates 413 / 431 payloads completely)
   const handleCommit = async (
     type: ReportType,
     area: AreaState,
@@ -109,53 +114,178 @@ export default function SinglePortalPage() {
   ) => {
     if (!area.file || !area.preview) return;
 
-    setArea(prev => ({ ...prev, isUploading: true, error: null, result: null }));
+    setArea(prev => ({
+      ...prev,
+      isUploading: true,
+      uploadStatusText: 'Preparing secure micro-batches...',
+      error: null,
+      result: null
+    }));
 
     try {
-      // Send compact client-parsed JSON payload (only ~100-300KB even for 50MB files!)
-      const res = await fetch('/api/v1/upload', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          reportType: type,
-          fileName: area.file.name,
-          fileSizeBytes: area.file.size,
-          detectedSheets: area.preview.detectedSheets,
-          detectedDateRange: area.preview.detectedDateRange,
-          siteMasterRecords: area.preview.siteMasterRecords,
-          narDailyRecords: area.preview.narDailyRecords,
-          narMbuSummaries: area.preview.narMbuSummaries,
-          narOutageTickets: area.preview.narOutageTickets,
-          fuelLogs: area.preview.fuelLogs,
-        }),
-      });
+      let finalResult: any = null;
+      let accAdded = 0;
+      let accUpdated = 0;
 
-      const responseText = await res.text();
-      let data: any;
-      try {
-        data = JSON.parse(responseText);
-      } catch (_) {
-        throw new Error(`Server returned non-JSON response (HTTP ${res.status}): ${responseText.substring(0, 150)}`);
-      }
+      if (type === 'SITE_MASTER') {
+        const records = area.preview.siteMasterRecords || [];
+        const totalBatches = Math.max(1, Math.ceil(records.length / BATCH_SIZE));
 
-      if (!res.ok) {
-        throw new Error(data.message || data.error || `Upload failed with status ${res.status}`);
+        for (let i = 0; i < totalBatches; i++) {
+          const slice = records.slice(i * BATCH_SIZE, (i + 1) * BATCH_SIZE);
+          const isLastBatch = i === totalBatches - 1;
+
+          setArea(prev => ({
+            ...prev,
+            uploadStatusText: totalBatches > 1 
+              ? `Syncing batch ${i + 1} of ${totalBatches} (${Math.round(((i + 1) / totalBatches) * 100)}%)...`
+              : 'Committing site master to SQL...',
+          }));
+
+          const res = await fetch('/api/v1/upload', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              reportType: type,
+              fileName: area.file.name,
+              fileSizeBytes: area.file.size,
+              detectedSheets: area.preview.detectedSheets,
+              detectedDateRange: area.preview.detectedDateRange,
+              isBatch: totalBatches > 1,
+              batchIndex: i,
+              totalBatches,
+              isLastBatch,
+              siteMasterRecords: slice,
+              cumulativeStats: isLastBatch ? { rowsAdded: accAdded, rowsUpdated: accUpdated, totalRows: records.length, validRows: records.length } : undefined,
+            }),
+          });
+
+          const resText = await res.text();
+          let data: any;
+          try { data = JSON.parse(resText); } catch (_) {
+            throw new Error(`Server returned non-JSON response (HTTP ${res.status}): ${resText.substring(0, 150)}`);
+          }
+
+          if (!res.ok) throw new Error(data.message || data.error || `Upload failed (HTTP ${res.status})`);
+
+          accAdded += data.rowsAdded || 0;
+          accUpdated += data.rowsUpdated || 0;
+          if (isLastBatch) finalResult = data;
+        }
+
+      } else if (type === 'NAR_PERFORMANCE') {
+        const daily = area.preview.narDailyRecords || [];
+        const tickets = area.preview.narOutageTickets || [];
+        const mbus = area.preview.narMbuSummaries || [];
+
+        const dailyBatches = Math.max(1, Math.ceil(daily.length / BATCH_SIZE));
+        const totalBatches = dailyBatches;
+
+        for (let i = 0; i < totalBatches; i++) {
+          const dailySlice = daily.slice(i * BATCH_SIZE, (i + 1) * BATCH_SIZE);
+          const isLastBatch = i === totalBatches - 1;
+
+          setArea(prev => ({
+            ...prev,
+            uploadStatusText: totalBatches > 1 
+              ? `Syncing NAR batch ${i + 1} of ${totalBatches} (${Math.round(((i + 1) / totalBatches) * 100)}%)...`
+              : 'Committing NAR performance data to SQL...',
+          }));
+
+          const res = await fetch('/api/v1/upload', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              reportType: type,
+              fileName: area.file.name,
+              fileSizeBytes: area.file.size,
+              detectedSheets: area.preview.detectedSheets,
+              detectedDateRange: area.preview.detectedDateRange,
+              isBatch: totalBatches > 1,
+              batchIndex: i,
+              totalBatches,
+              isLastBatch,
+              narDailyRecords: dailySlice,
+              narMbuSummaries: isLastBatch ? mbus : undefined,
+              narOutageTickets: isLastBatch ? tickets : undefined,
+              cumulativeStats: isLastBatch ? { rowsAdded: accAdded, rowsUpdated: accUpdated, totalRows: daily.length + tickets.length, validRows: daily.length + tickets.length } : undefined,
+            }),
+          });
+
+          const resText = await res.text();
+          let data: any;
+          try { data = JSON.parse(resText); } catch (_) {
+            throw new Error(`Server returned non-JSON response (HTTP ${res.status}): ${resText.substring(0, 150)}`);
+          }
+
+          if (!res.ok) throw new Error(data.message || data.error || `Upload failed (HTTP ${res.status})`);
+
+          accAdded += data.rowsAdded || 0;
+          accUpdated += data.rowsUpdated || 0;
+          if (isLastBatch) finalResult = data;
+        }
+
+      } else if (type === 'FUEL_ACTIVITY') {
+        const logs = area.preview.fuelLogs || [];
+        const totalBatches = Math.max(1, Math.ceil(logs.length / BATCH_SIZE));
+
+        for (let i = 0; i < totalBatches; i++) {
+          const slice = logs.slice(i * BATCH_SIZE, (i + 1) * BATCH_SIZE);
+          const isLastBatch = i === totalBatches - 1;
+
+          setArea(prev => ({
+            ...prev,
+            uploadStatusText: totalBatches > 1 
+              ? `Syncing fuel batch ${i + 1} of ${totalBatches} (${Math.round(((i + 1) / totalBatches) * 100)}%)...`
+              : 'Committing fuel activity to SQL...',
+          }));
+
+          const res = await fetch('/api/v1/upload', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              reportType: type,
+              fileName: area.file.name,
+              fileSizeBytes: area.file.size,
+              detectedSheets: area.preview.detectedSheets,
+              detectedDateRange: area.preview.detectedDateRange,
+              isBatch: totalBatches > 1,
+              batchIndex: i,
+              totalBatches,
+              isLastBatch,
+              fuelLogs: slice,
+              cumulativeStats: isLastBatch ? { rowsAdded: accAdded, rowsUpdated: accUpdated, totalRows: logs.length, validRows: logs.length } : undefined,
+            }),
+          });
+
+          const resText = await res.text();
+          let data: any;
+          try { data = JSON.parse(resText); } catch (_) {
+            throw new Error(`Server returned non-JSON response (HTTP ${res.status}): ${resText.substring(0, 150)}`);
+          }
+
+          if (!res.ok) throw new Error(data.message || data.error || `Upload failed (HTTP ${res.status})`);
+
+          accAdded += data.rowsAdded || 0;
+          accUpdated += data.rowsUpdated || 0;
+          if (isLastBatch) finalResult = data;
+        }
       }
 
       setArea(prev => ({
         ...prev,
         isUploading: false,
-        result: data,
+        uploadStatusText: '',
+        result: finalResult,
       }));
 
-      // Refresh database stats summary
+      // Refresh database telemetry
       fetchStats();
     } catch (err: any) {
       setArea(prev => ({
         ...prev,
         isUploading: false,
+        uploadStatusText: '',
         error: err.message || 'An error occurred during SQL ingestion.',
       }));
     }
@@ -298,83 +428,84 @@ export default function SinglePortalPage() {
             disabled={!area1.preview || area1.isUploading || area1.isParsing}
             onClick={() => handleCommit('SITE_MASTER', area1, setArea1)}
             className={`w-full py-2.5 px-4 rounded-xl text-xs font-bold transition-all shadow-lg flex items-center justify-center space-x-2 ${
-              !area1.preview || area1.isUploading || area1.isParsing
-                ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
-                : 'bg-gradient-to-r from-teal-500 to-emerald-600 hover:from-teal-400 hover:to-emerald-500 text-slate-950 hover:scale-[1.02]'
+              area1.preview && !area1.isUploading && !area1.isParsing
+                ? 'bg-gradient-to-r from-teal-500 to-emerald-600 hover:from-teal-400 hover:to-emerald-500 text-white shadow-teal-500/25 active:scale-[0.98]'
+                : 'bg-slate-800 text-slate-500 cursor-not-allowed'
             }`}
           >
             {area1.isUploading ? (
               <>
-                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                <span>Committing to SQL...</span>
+                <RefreshCw className="w-4 h-4 animate-spin" />
+                <span>{area1.uploadStatusText || 'Syncing...'}</span>
               </>
             ) : (
               <>
-                <Zap className="w-3.5 h-3.5" />
-                <span>Commit Site Master</span>
+                <span>Save & Overwrite Site Master</span>
+                <ArrowRight className="w-4 h-4" />
               </>
             )}
           </button>
         </div>
 
-
         {/* ============================================================ */}
         {/* AREA 2: NAR PERFORMANCE REPORT */}
         {/* ============================================================ */}
-        <div className="glass-card p-6 rounded-2xl border-t-4 border-t-emerald-500 flex flex-col justify-between space-y-4 shadow-xl">
+        <div className="glass-card p-6 rounded-2xl border-t-4 border-t-cyan-500 flex flex-col justify-between space-y-4 shadow-xl">
           <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800/60">
+              <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800/60">
                 SMART APPEND
               </span>
-              <Activity className="w-5 h-5 text-emerald-400" />
+              <Activity className="w-5 h-5 text-cyan-400" />
             </div>
             <div>
               <h3 className="font-bold text-base text-white">2. NAR Performance Report</h3>
               <p className="text-xs text-slate-300 mt-1 leading-relaxed">
-                Appends 1-day or 1-month sheets, merges daily downtime/NAR, MBU tables, and outage causes without erasing history.
+                Appends daily & monthly network availability, outage durations, MTTR, and failure metrics without losing history.
               </p>
             </div>
 
             {/* Drop Zone */}
             <div
               onClick={() => fileInputRef2.current?.click()}
-              className="border-2 border-dashed border-slate-800 hover:border-emerald-500/70 rounded-xl p-5 text-center cursor-pointer bg-slate-900/40 hover:bg-slate-900/60 transition-all"
+              className="border-2 border-dashed border-slate-800 hover:border-cyan-500/70 rounded-xl p-5 text-center cursor-pointer bg-slate-900/40 hover:bg-slate-900/60 transition-all"
             >
               <input
                 ref={fileInputRef2}
                 type="file"
-                accept=".xlsx,.xls"
+                accept=".xlsx,.xls,.csv"
                 onChange={e => e.target.files?.[0] && handleFileSelect(e.target.files[0], 'NAR_PERFORMANCE', setArea2)}
                 className="hidden"
               />
-              <UploadCloud className="w-8 h-8 mx-auto text-emerald-400 mb-2" />
+              <UploadCloud className="w-8 h-8 mx-auto text-cyan-400 mb-2" />
               <p className="text-xs font-bold text-white">
                 {area2.file ? area2.file.name : 'Select or Drop NAR Report'}
               </p>
-              <p className="text-[10px] text-slate-400 mt-0.5">Supports .xlsx (1-Day or Full Month)</p>
+              <p className="text-[10px] text-slate-400 mt-0.5">Supports .xlsx, .csv</p>
             </div>
 
             {/* Preview details */}
             {area2.isParsing && (
-              <div className="flex items-center space-x-2 text-xs text-emerald-300 font-mono py-1">
+              <div className="flex items-center space-x-2 text-xs text-cyan-300 font-mono py-1">
                 <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                <span>Parsing sheets (Site NAR, MBU, Outages)...</span>
+                <span>Inspecting workbook rows...</span>
               </div>
             )}
             {area2.preview && !area2.result && (
-              <div className="p-3 bg-slate-900/80 rounded-xl border border-emerald-900/40 text-[11px] space-y-1">
-                <div className="text-emerald-300 font-semibold flex items-center gap-1">
+              <div className="p-3 bg-slate-900/80 rounded-xl border border-cyan-900/40 text-[11px] space-y-1">
+                <div className="text-cyan-300 font-semibold flex items-center gap-1">
                   <Check className="w-3.5 h-3.5" />
-                  <span>Ready: {area2.preview.narDailyRecords?.length?.toLocaleString() || 0} Daily Metric Rows</span>
+                  <span>
+                    Ready to Append: {area2.preview.narDailyRecords?.length || 0} Day Records
+                  </span>
                 </div>
                 {area2.preview.detectedDateRange && (
                   <div className="text-slate-300 text-[10px]">
-                    Date Range: <strong className="text-white font-mono">{area2.preview.detectedDateRange}</strong>
+                    Detected Dates: <span className="text-cyan-300 font-mono">{area2.preview.detectedDateRange}</span>
                   </div>
                 )}
                 <div className="text-slate-400 text-[10px]">
-                  Sheets: {area2.preview.detectedSheets.slice(0, 3).join(', ')}...
+                  Outage Incidents: {area2.preview.narOutageTickets?.length || 0} | File: {(area2.file!.size / 1024).toFixed(1)} KB
                 </div>
               </div>
             )}
@@ -392,12 +523,12 @@ export default function SinglePortalPage() {
               <div className="p-3.5 rounded-xl bg-emerald-950/60 border border-emerald-600/60 text-emerald-300 text-xs space-y-1.5 shadow-lg">
                 <div className="flex items-center space-x-2 font-bold text-white">
                   <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                  <span>NAR Performance Appended!</span>
+                  <span>NAR Records Appended!</span>
                 </div>
                 <div className="text-[11px] text-slate-300">
-                  +{area2.result.summary?.rowsAdded?.toLocaleString() || 0} new records added
+                  +{area2.result.summary?.rowsAdded || 0} entries added/updated for ({area2.result.detectedDateRange || 'Detected Period'})
                 </div>
-                <div className="text-[10px] text-teal-300 flex items-center gap-1 pt-1 border-t border-emerald-900/60">
+                <div className="text-[10px] text-cyan-300 flex items-center gap-1 pt-1 border-t border-emerald-900/60">
                   <Clock className="w-3 h-3" />
                   <span>Live on app in 1–5 seconds upon open!</span>
                 </div>
@@ -410,28 +541,27 @@ export default function SinglePortalPage() {
             disabled={!area2.preview || area2.isUploading || area2.isParsing}
             onClick={() => handleCommit('NAR_PERFORMANCE', area2, setArea2)}
             className={`w-full py-2.5 px-4 rounded-xl text-xs font-bold transition-all shadow-lg flex items-center justify-center space-x-2 ${
-              !area2.preview || area2.isUploading || area2.isParsing
-                ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
-                : 'bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 hover:scale-[1.02]'
+              area2.preview && !area2.isUploading && !area2.isParsing
+                ? 'bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white shadow-cyan-500/25 active:scale-[0.98]'
+                : 'bg-slate-800 text-slate-500 cursor-not-allowed'
             }`}
           >
             {area2.isUploading ? (
               <>
-                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                <span>Appending to SQL...</span>
+                <RefreshCw className="w-4 h-4 animate-spin" />
+                <span>{area2.uploadStatusText || 'Syncing...'}</span>
               </>
             ) : (
               <>
-                <Zap className="w-3.5 h-3.5" />
-                <span>Append NAR Report</span>
+                <span>Save & Append NAR Report</span>
+                <ArrowRight className="w-4 h-4" />
               </>
             )}
           </button>
         </div>
 
-
         {/* ============================================================ */}
-        {/* AREA 3: FUELING & GENERATOR ACTIVITY */}
+        {/* AREA 3: FUELING & GENERATOR REPORT */}
         {/* ============================================================ */}
         <div className="glass-card p-6 rounded-2xl border-t-4 border-t-amber-500 flex flex-col justify-between space-y-4 shadow-xl">
           <div className="space-y-3">
@@ -444,7 +574,7 @@ export default function SinglePortalPage() {
             <div>
               <h3 className="font-bold text-base text-white">3. Fueling & Generator Activity</h3>
               <p className="text-xs text-slate-300 mt-1 leading-relaxed">
-                Appends daily fuel deliveries, Genset runtime, fuel consumption, and running tank balances.
+                Appends diesel refill quantities, generator run-hours, fuel levels, and operational energy statistics.
               </p>
             </div>
 
@@ -471,20 +601,18 @@ export default function SinglePortalPage() {
             {area3.isParsing && (
               <div className="flex items-center space-x-2 text-xs text-amber-300 font-mono py-1">
                 <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                <span>Parsing fuel & generator activity...</span>
+                <span>Inspecting workbook rows...</span>
               </div>
             )}
             {area3.preview && !area3.result && (
               <div className="p-3 bg-slate-900/80 rounded-xl border border-amber-900/40 text-[11px] space-y-1">
                 <div className="text-amber-300 font-semibold flex items-center gap-1">
                   <Check className="w-3.5 h-3.5" />
-                  <span>Ready: {area3.preview.fuelLogs?.length || 0} Fuel Delivery Logs</span>
+                  <span>Ready to Append: {area3.preview.fuelLogs?.length || 0} Fuel Entries</span>
                 </div>
-                {area3.preview.detectedDateRange && (
-                  <div className="text-slate-300 text-[10px]">
-                    Date: <strong className="text-white font-mono">{area3.preview.detectedDateRange}</strong>
-                  </div>
-                )}
+                <div className="text-slate-400 text-[10px]">
+                  File Size: {(area3.file!.size / 1024).toFixed(1)} KB
+                </div>
               </div>
             )}
 
@@ -504,9 +632,9 @@ export default function SinglePortalPage() {
                   <span>Fuel Logs Appended!</span>
                 </div>
                 <div className="text-[11px] text-slate-300">
-                  +{area3.result.summary?.rowsAdded?.toLocaleString() || 0} fuel logs added
+                  +{area3.result.summary?.rowsAdded || 0} fuel log entries added/updated
                 </div>
-                <div className="text-[10px] text-teal-300 flex items-center gap-1 pt-1 border-t border-emerald-900/60">
+                <div className="text-[10px] text-amber-300 flex items-center gap-1 pt-1 border-t border-emerald-900/60">
                   <Clock className="w-3 h-3" />
                   <span>Live on app in 1–5 seconds upon open!</span>
                 </div>
@@ -519,20 +647,20 @@ export default function SinglePortalPage() {
             disabled={!area3.preview || area3.isUploading || area3.isParsing}
             onClick={() => handleCommit('FUEL_ACTIVITY', area3, setArea3)}
             className={`w-full py-2.5 px-4 rounded-xl text-xs font-bold transition-all shadow-lg flex items-center justify-center space-x-2 ${
-              !area3.preview || area3.isUploading || area3.isParsing
-                ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
-                : 'bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-slate-950 hover:scale-[1.02]'
+              area3.preview && !area3.isUploading && !area3.isParsing
+                ? 'bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-white shadow-amber-500/25 active:scale-[0.98]'
+                : 'bg-slate-800 text-slate-500 cursor-not-allowed'
             }`}
           >
             {area3.isUploading ? (
               <>
-                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                <span>Appending to SQL...</span>
+                <RefreshCw className="w-4 h-4 animate-spin" />
+                <span>{area3.uploadStatusText || 'Syncing...'}</span>
               </>
             ) : (
               <>
-                <Zap className="w-3.5 h-3.5" />
-                <span>Append Fueling Report</span>
+                <span>Save & Append Fuel Report</span>
+                <ArrowRight className="w-4 h-4" />
               </>
             )}
           </button>
@@ -540,13 +668,13 @@ export default function SinglePortalPage() {
 
       </div>
 
-      {/* Instant Sync Propagation Notice */}
-      <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800 text-xs text-slate-400 flex items-center justify-between">
+      {/* Immediate App Sync Guarantee Footer Note */}
+      <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800/80 text-slate-400 text-xs flex items-center justify-between">
         <div className="flex items-center space-x-2">
-          <Zap className="w-4 h-4 text-teal-400 shrink-0" />
-          <span>All committed reports are immediately active on the REST API endpoint <code className="font-mono text-teal-300">/api/v1/sync</code> with zero server delay.</span>
+          <Zap className="w-4 h-4 text-teal-400" />
+          <span><strong>Automatic App Synchronization:</strong> Changes committed in any of the 3 areas above are encrypted and synced to all Android users on next app launch or resume without any APK reinstall.</span>
         </div>
-        <span className="font-mono text-emerald-400 font-semibold text-[11px]">OTA Sync Enabled</span>
+        <span className="text-[11px] font-mono text-teal-400/80 uppercase">Cluster-4 Live SQL</span>
       </div>
     </div>
   );
