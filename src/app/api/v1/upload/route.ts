@@ -17,6 +17,7 @@ export async function POST(req: NextRequest) {
 
     let rowsAdded = 0;
     let rowsUpdated = 0;
+    let rowsUnchanged = 0;
     let totalRows = 0;
     let validRows = 0;
     let warnings: string[] = [];
@@ -39,6 +40,7 @@ export async function POST(req: NextRequest) {
         const res = db.upsertSiteMasterRecords(body.siteMasterRecords);
         rowsAdded = res.added;
         rowsUpdated = res.updated;
+        rowsUnchanged = res.unchanged;
         totalRows = body.siteMasterRecords.length;
         validRows = body.siteMasterRecords.length;
       } else if (reportType === 'NAR_PERFORMANCE') {
@@ -46,6 +48,7 @@ export async function POST(req: NextRequest) {
           const res = db.appendNarDailyRecords(body.narDailyRecords);
           rowsAdded += res.added;
           rowsUpdated += res.updated;
+          rowsUnchanged += res.unchanged;
           totalRows += body.narDailyRecords.length;
           validRows += body.narDailyRecords.length;
         }
@@ -53,10 +56,12 @@ export async function POST(req: NextRequest) {
           const res = db.appendNarMbuSummaries(body.narMbuSummaries);
           rowsAdded += res.added;
           rowsUpdated += res.updated;
+          rowsUnchanged += res.unchanged;
         }
         if (body.narOutageTickets && body.narOutageTickets.length > 0) {
           const res = db.appendNarOutageTickets(body.narOutageTickets);
           rowsAdded += res.added;
+          rowsUnchanged += res.unchanged;
           totalRows += body.narOutageTickets.length;
           validRows += body.narOutageTickets.length;
         }
@@ -64,6 +69,7 @@ export async function POST(req: NextRequest) {
         const res = db.appendFuelLogs(body.fuelLogs);
         rowsAdded = res.added;
         rowsUpdated = res.updated;
+        rowsUnchanged = res.unchanged;
         totalRows = body.fuelLogs.length;
         validRows = body.fuelLogs.length;
       }
@@ -77,6 +83,7 @@ export async function POST(req: NextRequest) {
           totalBatches,
           rowsAdded,
           rowsUpdated,
+          rowsUnchanged,
           totalRows
         });
       }
@@ -85,6 +92,7 @@ export async function POST(req: NextRequest) {
       if (body.cumulativeStats) {
         rowsAdded += (body.cumulativeStats.rowsAdded || 0);
         rowsUpdated += (body.cumulativeStats.rowsUpdated || 0);
+        rowsUnchanged += (body.cumulativeStats.rowsUnchanged || 0);
         totalRows = body.cumulativeStats.totalRows || totalRows;
         validRows = body.cumulativeStats.validRows || validRows;
       }
@@ -115,25 +123,30 @@ export async function POST(req: NextRequest) {
         const res = db.upsertSiteMasterRecords(parseResult.siteMasterRecords);
         rowsAdded = res.added;
         rowsUpdated = res.updated;
+        rowsUnchanged = res.unchanged;
       } else if (parseResult.reportType === 'NAR_PERFORMANCE') {
         if (parseResult.narDailyRecords && parseResult.narDailyRecords.length > 0) {
           const res = db.appendNarDailyRecords(parseResult.narDailyRecords);
           rowsAdded += res.added;
           rowsUpdated += res.updated;
+          rowsUnchanged += res.unchanged;
         }
         if (parseResult.narMbuSummaries && parseResult.narMbuSummaries.length > 0) {
           const res = db.appendNarMbuSummaries(parseResult.narMbuSummaries);
           rowsAdded += res.added;
           rowsUpdated += res.updated;
+          rowsUnchanged += res.unchanged;
         }
         if (parseResult.narOutageTickets && parseResult.narOutageTickets.length > 0) {
           const res = db.appendNarOutageTickets(parseResult.narOutageTickets);
           rowsAdded += res.added;
+          rowsUnchanged += res.unchanged;
         }
       } else if (parseResult.reportType === 'FUEL_ACTIVITY' && parseResult.fuelLogs) {
         const res = db.appendFuelLogs(parseResult.fuelLogs);
         rowsAdded += res.added;
         rowsUpdated += res.updated;
+        rowsUnchanged += res.unchanged;
       }
     }
 
@@ -162,7 +175,8 @@ export async function POST(req: NextRequest) {
         totalRows,
         validRows,
         rowsAdded,
-        rowsUpdated
+        rowsUpdated,
+        rowsUnchanged
       },
       auditLog,
       stats: currentStats,

@@ -15,6 +15,7 @@ import type {
 // Data directory for local SQL/JSON storage
 const DATA_DIR = path.join(process.cwd(), 'data');
 const DB_FILE = path.join(DATA_DIR, 'engro_portal_database.json');
+const TMP_DB_FILE = '/tmp/engro_portal_database.json';
 
 interface DatabaseSchema {
   version: number;
@@ -61,51 +62,77 @@ class PortalDatabase {
   private init() {
     if (this.initialized) return;
     try {
-      if (!fs.existsSync(DATA_DIR)) {
-        fs.mkdirSync(DATA_DIR, { recursive: true });
-      }
-
+      // 1. Try local data dir
       if (fs.existsSync(DB_FILE)) {
         const raw = fs.readFileSync(DB_FILE, 'utf-8');
         this.db = { ...getDefaultSchema(), ...JSON.parse(raw) };
-      } else {
-        this.save();
+        this.initialized = true;
+        return;
       }
+
+      // 2. Try /tmp dir (serverless runtime)
+      if (fs.existsSync(TMP_DB_FILE)) {
+        const raw = fs.readFileSync(TMP_DB_FILE, 'utf-8');
+        this.db = { ...getDefaultSchema(), ...JSON.parse(raw) };
+        this.initialized = true;
+        return;
+      }
+
+      this.db = getDefaultSchema();
       this.initialized = true;
     } catch (err) {
       console.error('Failed to initialize database:', err);
       this.db = getDefaultSchema();
+      this.initialized = true;
     }
   }
 
   private save() {
+    const jsonStr = JSON.stringify(this.db, null, 2);
+    // 1. Save to local data dir if writable
     try {
       if (!fs.existsSync(DATA_DIR)) {
         fs.mkdirSync(DATA_DIR, { recursive: true });
       }
-      fs.writeFileSync(DB_FILE, JSON.stringify(this.db, null, 2), 'utf-8');
-    } catch (err) {
-      console.error('Failed to persist database:', err);
+      fs.writeFileSync(DB_FILE, jsonStr, 'utf-8');
+    } catch (_) {
+      // Ignore read-only filesystem error on serverless hosting
     }
+
+    // 2. Save to /tmp for serverless container caching
+    try {
+      fs.writeFileSync(TMP_DB_FILE, jsonStr, 'utf-8');
+    } catch (_) {}
   }
 
   // ==========================================
   // 1. SITE MASTER & STATUS (UPSERT / OVERWRITE)
   // ==========================================
-  public upsertSiteMasterRecords(records: SiteMasterRecord[]): { added: number; updated: number } {
+  public upsertSiteMasterRecords(records: SiteMasterRecord[]): { added: number; updated: number; unchanged: number } {
     this.init();
     let added = 0;
     let updated = 0;
+    let unchanged = 0;
 
     for (const record of records) {
       const key = record.code.trim().toUpperCase();
-      if (this.db.sitesMaster[key]) {
-        this.db.sitesMaster[key] = {
-          ...this.db.sitesMaster[key],
-          ...record,
-          lastUpdated: new Date().toISOString()
-        };
-        updated++;
+      const existing = this.db.sitesMaster[key];
+      if (existing) {
+        const isSame = existing.name === record.name && 
+                       existing.mbu === record.mbu && 
+                       existing.tier === record.tier && 
+                       existing.tenancy === record.tenancy &&
+                       existing.gridStatus === record.gridStatus;
+        if (isSame) {
+          unchanged++;
+        } else {
+          this.db.sitesMaster[key] = {
+            ...existing,
+            ...record,
+            lastUpdated: new Date().toISOString()
+          };
+          updated++;
+        }
       } else {
         this.db.sitesMaster[key] = {
           ...record,
@@ -117,7 +144,7 @@ class PortalDatabase {
     }
 
     this.save();
-    return { added, updated };
+    return { added, updated, unchanged };
   }
 
   public getAllSites(): SiteMasterRecord[] {
@@ -133,16 +160,22 @@ class PortalDatabase {
   // ==========================================
   // 2. NAR PERFORMANCE (SMART APPEND & MERGE)
   // ==========================================
-  public appendNarDailyRecords(records: NarDailyRecord[]): { added: number; updated: number } {
+  public appendNarDailyRecords(records: NarDailyRecord[]): { added: number; updated: number; unchanged: number } {
     this.init();
     let added = 0;
     let updated = 0;
+    let unchanged = 0;
 
     for (const rec of records) {
       const key = `${rec.siteCode.trim().toUpperCase()}_${rec.date}`;
-      if (this.db.narDaily[key]) {
-        this.db.narDaily[key] = rec;
-        updated++;
+      const existing = this.db.narDaily[key];
+      if (existing) {
+        if (existing.narPercentage === rec.narPercentage && existing.downtimeMinutes === rec.downtimeMinutes) {
+          unchanged++;
+        } else {
+          this.db.narDaily[key] = rec;
+          updated++;
+        }
       } else {
         this.db.narDaily[key] = rec;
         added++;
@@ -150,19 +183,25 @@ class PortalDatabase {
     }
 
     this.save();
-    return { added, updated };
+    return { added, updated, unchanged };
   }
 
-  public appendNarMbuSummaries(records: NarMbuSummaryRecord[]): { added: number; updated: number } {
+  public appendNarMbuSummaries(records: NarMbuSummaryRecord[]): { added: number; updated: number; unchanged: number } {
     this.init();
     let added = 0;
     let updated = 0;
+    let unchanged = 0;
 
     for (const rec of records) {
       const key = `${rec.mbu.trim().toUpperCase()}_${rec.month}`;
-      if (this.db.narMbuSummary[key]) {
-        this.db.narMbuSummary[key] = rec;
-        updated++;
+      const existing = this.db.narMbuSummary[key];
+      if (existing) {
+        if (existing.tdtHours === rec.tdtHours && existing.tnarPercentage === rec.tnarPercentage) {
+          unchanged++;
+        } else {
+          this.db.narMbuSummary[key] = rec;
+          updated++;
+        }
       } else {
         this.db.narMbuSummary[key] = rec;
         added++;
@@ -170,33 +209,36 @@ class PortalDatabase {
     }
 
     this.save();
-    return { added, updated };
+    return { added, updated, unchanged };
   }
 
-  public appendNarOutageTickets(tickets: NarOutageTicket[]): { added: number } {
+  public appendNarOutageTickets(tickets: NarOutageTicket[]): { added: number; unchanged: number } {
     this.init();
     let added = 0;
+    let unchanged = 0;
     for (const t of tickets) {
-      // Avoid duplicate tickets for same site + date + reason
       const exists = this.db.narOutageTickets.some(
         existing => existing.siteCode === t.siteCode && existing.date === t.date && existing.reason === t.reason
       );
       if (!exists) {
         this.db.narOutageTickets.push(t);
         added++;
+      } else {
+        unchanged++;
       }
     }
     this.save();
-    return { added };
+    return { added, unchanged };
   }
 
   // ==========================================
   // 3. FUEL ACTIVITY (SMART APPEND)
   // ==========================================
-  public appendFuelLogs(logs: FuelActivityRecord[]): { added: number; updated: number } {
+  public appendFuelLogs(logs: FuelActivityRecord[]): { added: number; updated: number; unchanged: number } {
     this.init();
     let added = 0;
     let updated = 0;
+    let unchanged = 0;
 
     for (const log of logs) {
       const existingIdx = this.db.fuelLogs.findIndex(
@@ -204,8 +246,17 @@ class PortalDatabase {
       );
 
       if (existingIdx >= 0) {
-        this.db.fuelLogs[existingIdx] = log;
-        updated++;
+        const existing = this.db.fuelLogs[existingIdx];
+        const isSame = existing.fuelAddedLiters === log.fuelAddedLiters && 
+                       existing.dgRuntimeHours === log.dgRuntimeHours && 
+                       existing.fuelConsumptionLiters === log.fuelConsumptionLiters && 
+                       existing.currentBalanceLiters === log.currentBalanceLiters;
+        if (isSame) {
+          unchanged++;
+        } else {
+          this.db.fuelLogs[existingIdx] = log;
+          updated++;
+        }
       } else {
         this.db.fuelLogs.push(log);
         added++;
@@ -213,7 +264,7 @@ class PortalDatabase {
     }
 
     this.save();
-    return { added, updated };
+    return { added, updated, unchanged };
   }
 
   public getFuelLogs(limit = 500): FuelActivityRecord[] {
@@ -264,10 +315,10 @@ class PortalDatabase {
     return Object.values(this.db.apiKeys);
   }
 
-  public toggleApiKey(id: string, active: boolean): boolean {
+  public toggleApiKey(id: string, isActive: boolean): boolean {
     this.init();
     if (this.db.apiKeys[id]) {
-      this.db.apiKeys[id].isActive = active;
+      this.db.apiKeys[id].isActive = isActive;
       this.save();
       return true;
     }
@@ -287,19 +338,20 @@ class PortalDatabase {
   // ==========================================
   // 5. AUDIT LOGS
   // ==========================================
-  public addAuditLog(log: Omit<UploadAuditLog, 'id' | 'timestamp'>): UploadAuditLog {
+  public addAuditLog(entry: Omit<UploadAuditLog, 'id' | 'timestamp'>): UploadAuditLog {
     this.init();
-    const entry: UploadAuditLog = {
-      ...log,
+    const log: UploadAuditLog = {
+      ...entry,
       id: `audit_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
       timestamp: new Date().toISOString()
     };
-    this.db.auditLogs.unshift(entry);
-    if (this.db.auditLogs.length > 500) {
-      this.db.auditLogs = this.db.auditLogs.slice(0, 500);
+    this.db.auditLogs.unshift(log);
+    // Keep last 100 logs
+    if (this.db.auditLogs.length > 100) {
+      this.db.auditLogs = this.db.auditLogs.slice(0, 100);
     }
     this.save();
-    return entry;
+    return log;
   }
 
   public getAuditLogs(limit = 50): UploadAuditLog[] {
@@ -308,13 +360,12 @@ class PortalDatabase {
   }
 
   // ==========================================
-  // 6. COMPILE SYNC PAYLOAD FOR MOBILE APP
+  // 6. SYNC PAYLOAD (COMPILED FOR MOBILE APP)
   // ==========================================
   public getSyncPayload(): SyncPayload {
     this.init();
     const sites = this.db.sitesMaster;
     const narDaily = Object.values(this.db.narDaily);
-    const mbuSummaries = Object.values(this.db.narMbuSummary);
     const outageTickets = this.db.narOutageTickets;
     const fuelLogs = this.db.fuelLogs;
 

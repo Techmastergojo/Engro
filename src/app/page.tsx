@@ -16,7 +16,8 @@ import {
   Zap, 
   ArrowRight,
   TrendingUp,
-  Calendar
+  Calendar,
+  Layers
 } from 'lucide-react';
 import type { ReportType } from '@/lib/types';
 import { parseReportFile, type ParseResult } from '@/lib/parser/excelParser';
@@ -128,6 +129,7 @@ export default function SinglePortalPage() {
       let finalResult: any = null;
       let accAdded = 0;
       let accUpdated = 0;
+      let accUnchanged = 0;
 
       if (type === 'SITE_MASTER') {
         const records = area.preview.siteMasterRecords || [];
@@ -158,7 +160,7 @@ export default function SinglePortalPage() {
               totalBatches,
               isLastBatch,
               siteMasterRecords: slice,
-              cumulativeStats: isLastBatch ? { rowsAdded: accAdded, rowsUpdated: accUpdated, totalRows: records.length, validRows: records.length } : undefined,
+              cumulativeStats: isLastBatch ? { rowsAdded: accAdded, rowsUpdated: accUpdated, rowsUnchanged: accUnchanged, totalRows: records.length, validRows: records.length } : undefined,
             }),
           });
 
@@ -172,6 +174,7 @@ export default function SinglePortalPage() {
 
           accAdded += data.rowsAdded || 0;
           accUpdated += data.rowsUpdated || 0;
+          accUnchanged += data.rowsUnchanged || 0;
           if (isLastBatch) {
             finalResult = {
               ...data,
@@ -179,6 +182,7 @@ export default function SinglePortalPage() {
                 ...data.summary,
                 rowsAdded: accAdded,
                 rowsUpdated: accUpdated,
+                rowsUnchanged: accUnchanged,
                 totalRows: records.length
               }
             };
@@ -220,7 +224,7 @@ export default function SinglePortalPage() {
               narDailyRecords: dailySlice,
               narMbuSummaries: isLastBatch ? mbus : undefined,
               narOutageTickets: isLastBatch ? tickets : undefined,
-              cumulativeStats: isLastBatch ? { rowsAdded: accAdded, rowsUpdated: accUpdated, totalRows: daily.length + tickets.length, validRows: daily.length + tickets.length } : undefined,
+              cumulativeStats: isLastBatch ? { rowsAdded: accAdded, rowsUpdated: accUpdated, rowsUnchanged: accUnchanged, totalRows: daily.length + tickets.length, validRows: daily.length + tickets.length } : undefined,
             }),
           });
 
@@ -234,6 +238,7 @@ export default function SinglePortalPage() {
 
           accAdded += data.rowsAdded || 0;
           accUpdated += data.rowsUpdated || 0;
+          accUnchanged += data.rowsUnchanged || 0;
           if (isLastBatch) {
             finalResult = {
               ...data,
@@ -241,6 +246,7 @@ export default function SinglePortalPage() {
                 ...data.summary,
                 rowsAdded: accAdded,
                 rowsUpdated: accUpdated,
+                rowsUnchanged: accUnchanged,
                 totalRows: daily.length + tickets.length
               }
             };
@@ -276,7 +282,7 @@ export default function SinglePortalPage() {
               totalBatches,
               isLastBatch,
               fuelLogs: slice,
-              cumulativeStats: isLastBatch ? { rowsAdded: accAdded, rowsUpdated: accUpdated, totalRows: logs.length, validRows: logs.length } : undefined,
+              cumulativeStats: isLastBatch ? { rowsAdded: accAdded, rowsUpdated: accUpdated, rowsUnchanged: accUnchanged, totalRows: logs.length, validRows: logs.length } : undefined,
             }),
           });
 
@@ -290,6 +296,7 @@ export default function SinglePortalPage() {
 
           accAdded += data.rowsAdded || 0;
           accUpdated += data.rowsUpdated || 0;
+          accUnchanged += data.rowsUnchanged || 0;
           if (isLastBatch) {
             finalResult = {
               ...data,
@@ -297,6 +304,7 @@ export default function SinglePortalPage() {
                 ...data.summary,
                 rowsAdded: accAdded,
                 rowsUpdated: accUpdated,
+                rowsUnchanged: accUnchanged,
                 totalRows: logs.length
               }
             };
@@ -442,15 +450,16 @@ export default function SinglePortalPage() {
               <div className="p-3.5 rounded-xl bg-emerald-950/60 border border-emerald-600/60 text-emerald-300 text-xs space-y-2 shadow-lg">
                 <div className="flex items-center space-x-2 font-bold text-white">
                   <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                  <span>Site Master Refreshed & Synced!</span>
+                  <span>Site Master Processed & Synced!</span>
                 </div>
                 <div className="p-2 rounded bg-slate-950/80 border border-emerald-900/60 space-y-1 text-[11px]">
                   <div className="text-emerald-300 font-medium">
-                    Total Processed: <strong>{(area1.result.summary?.rowsAdded || 0) + (area1.result.summary?.rowsUpdated || 0)} sites</strong>
+                    Total Processed: <strong>{area1.result.summary?.totalRows || 0} sites</strong>
                   </div>
-                  <div className="text-slate-300 text-[10px] flex justify-between">
-                    <span>✨ Newly Added: <strong>+{area1.result.summary?.rowsAdded || 0}</strong></span>
-                    <span>🔄 Updated / Replaced: <strong>{area1.result.summary?.rowsUpdated || 0}</strong></span>
+                  <div className="text-slate-300 text-[10px] flex flex-wrap gap-2 justify-between">
+                    <span>✨ New Sites: <strong>+{area1.result.summary?.rowsAdded || 0}</strong></span>
+                    <span>🔄 Updated: <strong>{area1.result.summary?.rowsUpdated || 0}</strong></span>
+                    <span>⚡ Unchanged: <strong>{area1.result.summary?.rowsUnchanged || 0}</strong></span>
                   </div>
                 </div>
                 <div className="text-[10px] text-teal-300 flex items-center gap-1 pt-1 border-t border-emerald-900/60 font-medium">
@@ -562,15 +571,16 @@ export default function SinglePortalPage() {
               <div className="p-3.5 rounded-xl bg-emerald-950/60 border border-emerald-600/60 text-emerald-300 text-xs space-y-2 shadow-lg">
                 <div className="flex items-center space-x-2 font-bold text-white">
                   <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                  <span>NAR Records Appended & Synced!</span>
+                  <span>NAR Records Processed & Synced!</span>
                 </div>
                 <div className="p-2 rounded bg-slate-950/80 border border-emerald-900/60 space-y-1 text-[11px]">
                   <div className="text-cyan-300 font-medium">
-                    Total Processed: <strong>{(area2.result.summary?.rowsAdded || 0) + (area2.result.summary?.rowsUpdated || 0)} entries</strong>
+                    Total Ingestion: <strong>{area2.result.summary?.totalRows || 0} entries</strong>
                   </div>
-                  <div className="text-slate-300 text-[10px] flex justify-between">
-                    <span>✨ New Entries: <strong>+{area2.result.summary?.rowsAdded || 0}</strong></span>
-                    <span>🔄 Existing Refreshed: <strong>{area2.result.summary?.rowsUpdated || 0}</strong></span>
+                  <div className="text-slate-300 text-[10px] flex flex-wrap gap-2 justify-between">
+                    <span>✨ New Added: <strong>+{area2.result.summary?.rowsAdded || 0}</strong></span>
+                    <span>🔄 Updated: <strong>{area2.result.summary?.rowsUpdated || 0}</strong></span>
+                    <span>⚡ Unchanged: <strong>{area2.result.summary?.rowsUnchanged || 0}</strong></span>
                   </div>
                   <div className="text-slate-400 text-[10px] pt-1 border-t border-slate-800">
                     Period: <strong className="text-white font-mono">{area2.result.detectedDateRange || 'Detected Period'}</strong>
@@ -683,15 +693,16 @@ export default function SinglePortalPage() {
               <div className="p-3.5 rounded-xl bg-emerald-950/60 border border-emerald-600/60 text-emerald-300 text-xs space-y-2 shadow-lg">
                 <div className="flex items-center space-x-2 font-bold text-white">
                   <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                  <span>Fuel Logs Appended & Synced!</span>
+                  <span>Fuel Logs Processed & Synced!</span>
                 </div>
                 <div className="p-2 rounded bg-slate-950/80 border border-emerald-900/60 space-y-1 text-[11px]">
                   <div className="text-amber-300 font-medium">
-                    Total Processed: <strong>{(area3.result.summary?.rowsAdded || 0) + (area3.result.summary?.rowsUpdated || 0)} entries</strong>
+                    Total Ingestion: <strong>{area3.result.summary?.totalRows || 0} entries</strong>
                   </div>
-                  <div className="text-slate-300 text-[10px] flex justify-between">
-                    <span>✨ New Entries: <strong>+{area3.result.summary?.rowsAdded || 0}</strong></span>
-                    <span>🔄 Existing Refreshed: <strong>{area3.result.summary?.rowsUpdated || 0}</strong></span>
+                  <div className="text-slate-300 text-[10px] flex flex-wrap gap-2 justify-between">
+                    <span>✨ New Added: <strong>+{area3.result.summary?.rowsAdded || 0}</strong></span>
+                    <span>🔄 Updated: <strong>{area3.result.summary?.rowsUpdated || 0}</strong></span>
+                    <span>⚡ Unchanged: <strong>{area3.result.summary?.rowsUnchanged || 0}</strong></span>
                   </div>
                   <div className="text-slate-400 text-[10px] pt-1 border-t border-slate-800">
                     Period: <strong className="text-white font-mono">{area3.result.detectedDateRange || 'All Dates'}</strong>
